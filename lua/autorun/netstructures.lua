@@ -45,7 +45,7 @@ local structureType = {
 
 	[STRUCTURE_ENTITY] = {
 		name = "entity",
-		predicate = function(v) return IsValid(v) end,
+		predicate = function(v) return IsValid(v) or v == game.GetWorld() end,
 		write = net.WriteEntity,
 		read = net.ReadEntity
 	},
@@ -133,32 +133,84 @@ function net.RegisterStructure(name, structure)
 	assert(not istable(structureType[name]), Format([[A Structure type exists with the name "%s"]], name))
 	assert(istable(structure), "Structure must be a table")
 
-	for k, v in SortedPairs(structure) do
-		if (istable(v)) then
-			assert(table.IsSequential(v), Format("Structure tables must be sequential (at index %s)", k))
-			assert(#v == 1, Format("Structure tables must contain only 1 element (at index %s)", k))
+	if (table.IsSequential(structure)) then
+		assert(#structure == 1, "Sequential Structures must contain only 1 element")
 
-			local element = v[1]
+		local element = structure[1]
 
-			if (isnumber(element)) then
-				assert(element >= 0 and element <= 12, Format("Structure table element number value must be a STRUCTURE_* value (at index %s)", k))
-			elseif (isstring(element)) then
-				if (not istable(structures[element]) and not istable(structureType[element])) then
-					assert(false, Format("Structure table element string value must refer to a Structure Reference or Structure type (at index %s)", k))
+		assert(istable(structures[element]) or istable(structureType[element]), Format("Invalid Sequential Structure Type: \"%s\". Sequential Structure elements must be a STRUCTURE_* value, Structure reference or Structure type", element))
+	else
+		for k, v in SortedPairs(structure) do
+			if (istable(v)) then
+				assert(table.IsSequential(v), Format("Structure tables must be sequential (at index %s)", k))
+				assert(#v == 1, Format("Structure tables must contain only 1 element (at index %s)", k))
+
+				local element = v[1]
+
+				if (isnumber(element)) then
+					assert(element >= 0 and element <= 12, Format("Structure table element number value must be a STRUCTURE_* value (at index %s)", k))
+				elseif (isstring(element)) then
+					assert(istable(structures[element]) or istable(structureType[element]), Format("Structure table element string value must refer to a Structure Reference or Structure type (at index %s)", k))
+				else
+					assert(false, Format("Structure table elements must be STRUCTURE_* values, Structure References or Structure types (at index %s)", k))
 				end
+			elseif (isstring(v)) then
+				assert(istable(structures[v]) or istable(structureType[v]), "Structure string values must refer to a Structure or Structure type")
+				assert(v ~= name, "Structure references cannot refer to the Structure containing them")
 			else
-				assert(false, Format("Structure table elements must be STRUCTURE_* values, Structure References or Structure types (at index %s)", k))
+				assert(isnumber(v), Format("Structure values must be numbers (at index %s)", k))
+				assert(v >= 0 and v <= 12, Format("Structure values must be STRUCTURE_* values (at index %s)", k))
 			end
-		elseif (isstring(v)) then
-			assert(istable(structures[v]) or istable(structureType[v]), "Structure string values must refer to a Structure or Structure type")
-			assert(v ~= name, "Structure references cannot refer to the Structure containing them")
-		else
-			assert(isnumber(v), Format("Structure values must be numbers (at index %s)", k))
-			assert(v >= 0 and v <= 12, Format("Structure values must be STRUCTURE_* values (at index %s)", k))
 		end
 	end
 
 	structures[name] = structure
+end
+
+local function writeSequentialTable(structType, tbl)
+	assert(table.IsSequential(tbl), "Structure tables must be sequential")
+
+	local count = #tbl
+	net.WriteUInt(count, 32)
+
+	for index = 1, count do
+		if (istable(structureType[structType])) then
+			local typeData = structureType[structType]
+
+			local element = tbl[index];
+			local valueString = tostring(element);
+
+			// Error messages cannot contain square brackets without it ruining everything.
+			// Why? Because Garry's Mod.
+			if (IsValid(element) or element == game.GetWorld()) then
+				if (element:IsPlayer()) then
+					valueString = Format("Player (%i) %s", element:EntIndex(), element:Name());
+				else
+					valueString = Format("Entity (%i) %s", element:EntIndex(), element:GetClass());
+				end
+			end
+
+			assert(typeData.predicate(tbl[index]), Format("Structure table value (%s:%s) does not match predicate of %s (at index %i)", valueString, type(tbl[index]), typeData.name, index))
+			typeData.write(tbl[index])
+		elseif (istable(structures[structType])) then
+			net.WriteStructure(structType, tbl[index])
+		end
+	end
+end
+
+local function readSequentialTable(structType)
+	local count = net.ReadUInt(32)
+
+	local array = {}
+	for i = 1, count do
+		if (istable(structureType[structType])) then
+			array[i] = structureType[structType].read()
+		elseif (istable(structures[structType])) then
+			array[i] = net.ReadStructure(structType)
+		end
+	end
+
+	return array
 end
 
 function net.WriteStructure(name, structure)
@@ -166,31 +218,24 @@ function net.WriteStructure(name, structure)
 	assert(istable(structure), "Structure must be a table")
 	assert(istable(structures[name]), Format([[Invalid structure "%s"]], name))
 
-	for k,v in SortedPairs(structures[name]) do
-		local value = structure[k]
+	local structureData = structures[name]
 
-		assert(value ~= nil, Format("Structure table missing index for %s", k))
+	if (table.IsSequential(structureData)) then
+		writeSequentialTable(structureData[1], structure)
+	else
+		for k,v in SortedPairs(structureData) do
+			local value = structure[k]
 
-		if (istable(structureType[v])) then
-			local typeData = structureType[v]
-			assert(typeData.predicate(value), Format("Structure value does not match predicate of %s (at index %s)", typeData.name, k))
-			typeData.write(value)
-		elseif (istable(structures[v])) then
-			net.WriteStructure(v, structure[k])
-		elseif (istable(v)) then
-			assert(table.IsSequential(value), "Structure tables must be sequential")
+			assert(value ~= nil, Format("Structure table missing index for %s", k))
 
-			local count = #value
-			net.WriteUInt(count, 32)
-
-			for index = 1, count do
-				if (istable(structureType[v[1]])) then
-					local typeData = structureType[v[1]]
-					assert(typeData.predicate(value[index]), Format("Structure table value does not match predicate of %s (at index %s:%i)", typeData.name, k, index))
-					typeData.write(value[index])
-				elseif (istable(structures[v[1]])) then
-					net.WriteStructure(v[1], value[index])
-				end
+			if (istable(structureType[v])) then
+				local typeData = structureType[v]
+				assert(typeData.predicate(value), Format("Structure value does not match predicate of %s (at index %s)", typeData.name, k))
+				typeData.write(value)
+			elseif (istable(structures[v])) then
+				net.WriteStructure(v, structure[k])
+			elseif (istable(v)) then
+				writeSequentialTable(v[1], structure[k])
 			end
 		end
 	end
@@ -200,32 +245,27 @@ function net.ReadStructure(name)
 	assert(isstring(name), "Structure name must me a string")
 	assert(istable(structures[name]), Format([[Invalid structure "%s"]], name))
 
-	local ret = {}
+	local structure = structures[name]
 
-	for k,v in SortedPairs(structures[name]) do
-		if (istable(structures[v])) then
-			ret[k] = net.ReadStructure(v)
-		elseif (istable(structureType[v])) then
-			ret[k] = structureType[v].read()
-		else
-			if (istable(v)) then
-				local count = net.ReadUInt(32)
+	if (table.IsSequential(structure)) then
+		return readSequentialTable(structure[1])
+	else
+		local ret = {}
 
-				local array = {}
-				for i = 1, count do
-					if (istable(structureType[v[1]])) then
-						array[i] = structureType[v[1]].read()
-					elseif (istable(structures[v[1]])) then
-						array[i] = net.ReadStructure(v[1])
-					end
-				end
-
-				ret[k] = array
-			else --if (isstring(v) and istable(structures[v])) then
+		for k,v in SortedPairs(structure) do
+			if (istable(structures[v])) then
+				ret[k] = net.ReadStructure(v)
+			elseif (istable(structureType[v])) then
 				ret[k] = structureType[v].read()
+			else
+				if (istable(v)) then
+					ret[k] = readSequentialTable(v[1])
+				else --if (isstring(v) and istable(structures[v])) then
+					ret[k] = structureType[v].read()
+				end
 			end
 		end
-	end
 
-	return ret
+		return ret
+	end
 end
