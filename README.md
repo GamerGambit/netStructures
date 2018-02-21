@@ -32,8 +32,8 @@ STRUCTURE_UINT32 -- Integer values between 0 and 4294967295
 The first step to using netStructures is to register your table structure:
 ```
 net.RegisterStructure("my_struct_weps", {
-    name = STRUCTURE_STRING,
-    ammo = STRUCTURE_NUMBER
+	name = STRUCTURE_STRING,
+	ammo = STRUCTURE_NUMBER
 })
 ```
 
@@ -43,8 +43,8 @@ The code above says to create a new structure called "my\_struct\_weps" with 2 f
 Writing structures is almost identical to `net.WriteTable`:
 ```
 net.WriteStructure("my_struct_weps", {
-    name = "pistol",
-    ammo = 10
+	name = "pistol",
+	ammo = 10
 })
 ```
 
@@ -65,91 +65,91 @@ local wep = net.ReadStructure("my_struct_weps")
 **netStructures** allows fields to reference other structures:
 ```
 net.RegisterStructure("my_struct", {
-    name = STRUCTURE_STRING,
-    weapon = "my_struct_weps"
+	name = STRUCTURE_STRING,
+	weapon = "my_struct_weps"
 })
 ```
 
 The above code creates a new structure where weapon refers to the structure we created earlier. This is known as a *Structure Reference*. This new structure can be networked like so:
 ```
 net.WriteStructure("my_struct", {
-    name = "Gambit",
-    weapon = {
-        name = "pistol",
-        ammo = 10
-    }
+	name = "Gambit",
+	weapon = {
+		name = "pistol",
+		ammo = 10
+	}
 })
 ```
 
 **netStructures** also lets structures define sequential arrays. Arrays must be homogeneous, using the `STRUCTURE_*` enums or *Structure References*:
 ```
 net.RegisterStructure("my_struct", {
-    name = STRUCTURE_STRING,
-    weapons = {"my_struct_weps"} -- denotes that `items` is a sequential array of the "my_struct_weps" structure
+	name = STRUCTURE_STRING,
+	weapons = {"my_struct_weps"} -- denotes that `items` is a sequential array of the "my_struct_weps" structure
 })
 
 net.WriteStructure("my_struct", {
-    name = "Gambit",
-    weapons = {
-        {
-            name = "pistol",
-            ammo = 10
-        }
-    }
+	name = "Gambit",
+	weapons = {
+		{
+			name = "pistol",
+			ammo = 10
+		}
+	}
 })
 ```
 
 With the complete sample program, here are some results:
 ```
 net.RegisterStructure("my_struct_weps", {
-    name = STRUCTURE_STRING,
-    ammo = STRUCTURE_NUMBER
+	name = STRUCTURE_STRING,
+	ammo = STRUCTURE_NUMBER
 })
 
 net.RegisterStructure("my_struct", {
-    name = STRUCTURE_STRING,
-    items = {"my_struct_weps"} -- denotes that `items` is a sequential array of the "my_struct_weps" structure
+	name = STRUCTURE_STRING,
+	items = {"my_struct_weps"} -- denotes that `items` is a sequential array of the "my_struct_weps" structure
 })
 
 if (SERVER) then
-    util.AddNetworkString("my_struct_nws")
-    util.AddNetworkString("my_struct_nws_tbl")
-    
-    function netStructureTest(ply)
-        net.Start("my_struct_nws")
-            net.WriteStructure("my_struct", {
-                name = "Gambit",
-                items = {
-                    {
-                        name = "pistol",
-                        ammo = 10
-                    }
-                }
-            })
-        net.Send(ply)
-        
-        net.Start("my_struct_nws_tbl")
-            net.WriteTable({
-                name = "Gambit",
-                items = {
-                    {
-                        name = "pistol",
-                        ammo = 10
-                    }
-                }
-            })
-        net.Send(ply)
-    end
+	util.AddNetworkString("my_struct_nws")
+	util.AddNetworkString("my_struct_nws_tbl")
+	
+	function netStructureTest(ply)
+		net.Start("my_struct_nws")
+			net.WriteStructure("my_struct", {
+				name = "Gambit",
+				items = {
+					{
+						name = "pistol",
+						ammo = 10
+					}
+				}
+			})
+		net.Send(ply)
+		
+		net.Start("my_struct_nws_tbl")
+			net.WriteTable({
+				name = "Gambit",
+				items = {
+					{
+						name = "pistol",
+						ammo = 10
+					}
+				}
+			})
+		net.Send(ply)
+	end
 else
-    net.Receive("my_struct_nws", function(l)
-        print("net.ReadStructure", l)
-        PrintTable(net.ReadStructure("my_struct"))
-    end)
-    
-    net.Receive("my_struct_nws_tbl", function(l)
-        print("net.ReadTable", l)
-        PrintTable(net.ReadTable())
-    end)
+	net.Receive("my_struct_nws", function(l)
+		print("net.ReadStructure", l)
+		PrintTable(net.ReadStructure("my_struct"))
+	end)
+	
+	net.Receive("my_struct_nws_tbl", function(l)
+		print("net.ReadTable", l)
+		PrintTable(net.ReadTable())
+	end)
 end
 ```
 ```
@@ -168,3 +168,61 @@ name	=	Gambit
 ```
 
 In this example, we can see an almost 2.5x improvement on size compared to `net.Read/WriteTable`. Other tables and structures I have tested have yielded upwards of 3.5x so your mileage may vary.
+
+## Custom Structure Types
+**netStructures** allows you to register custom types in the event that using the built-in `STRUCTURE_*` enums is not enough.
+```
+net.RegisterType("matrix", {
+	name = "matrix",
+	predicate = function(v) return ismatrix(v) end,
+	write = net.WriteMatrix,
+	read = net.ReadMatrix
+})
+```
+
+Here, we create a new "matrix" *Structure Type*. *Structure Type*s contain a name for pretty-printing, a predicate to decide if a given variable maps to the type, and read and write functions for networking.
+
+Custom `Structure Type`s can be used in-place of `STRUCTURE_*` enums, having `write` called when the type is sent and `read` called when the type is read.
+```
+net.RegisterStructure("my_struct", {
+	name = STRUCTURE_STRING,
+	items = {"matrix"} -- denotes that `items` is a sequential array of the "matrix" Structure Type
+})
+
+if (SERVER) then
+	util.AddNetworkString("my_struct_nws")
+	util.AddNetworkString("my_struct_nws_tbl")
+	
+	function netStructureTest(ply)
+		net.Start("my_struct_nws")
+			net.WriteStructure("my_struct", {
+				name = "Gambit",
+				items = {
+					Matrix({{0, 0, 0, 0}, {1, 1, 1, 1}, {2, 2, 2, 2}, {3, 3, 3, 3}}),
+					Matrix({{0, 1, 2, 3}, {4, 5, 6, 7}, {8, 9, 8, 7}, {6, 5, 4, 2}})
+				}
+			})
+		net.Send(ply)
+		
+		net.Start("my_struct_nws_tbl")
+			net.WriteTable({
+				name = "Gambit",
+				items = {
+					Matrix({{0, 0, 0, 0}, {1, 1, 1, 1}, {2, 2, 2, 2}, {3, 3, 3, 3}}),
+					Matrix({{0, 1, 2, 3}, {4, 5, 6, 7}, {8, 9, 8, 7}, {6, 5, 4, 2}})
+				}
+			})
+		net.Send(ply)
+	end
+else
+	net.Receive("my_struct_nws", function(l)
+		print("net.ReadStructure", l)
+		PrintTable(net.ReadStructure("my_struct"))
+	end)
+	
+	net.Receive("my_struct_nws_tbl", function(l)
+		print("net.ReadTable", l)
+		PrintTable(net.ReadTable())
+	end)
+end
+```

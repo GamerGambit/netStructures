@@ -114,14 +114,26 @@ local structureType = {
 	}
 }
 
+function net.RegisterType(name, data)
+	assert(isstring(name), "Structure type names must be strings")
+	assert(not istable(structureType[name]), Format([[Structure type "%s" already exists]], name))
+	assert(not istable(structures[name]), Format([[A Structure exists with the name "%s"]], name))
+	assert(istable(data), "Structure type data must be a table")
+	assert(isstring(data.name), "Structure type data must have a name string")
+	assert(isfunction(data.predicate), "Structure type data must have a predicate function")
+	assert(isfunction(data.write), "Structure type data must have a write function")
+	assert(isfunction(data.read), "Structure type data must have a read function")
+
+	structureType[name] = data
+end
+
 function net.RegisterStructure(name, structure)
 	assert(isstring(name), "Structure name must be a string")
 	assert(not istable(structures[name]), Format([[Structure "%s" already exists]], name))
+	assert(not istable(structureType[name]), Format([[A Structure type exists with the name "%s"]], name))
 	assert(istable(structure), "Structure must be a table")
 
 	for k, v in SortedPairs(structure) do
-		assert(isstring(k), "structure keys must be strings")
-
 		if (istable(v)) then
 			assert(table.IsSequential(v), Format("Structure tables must be sequential (at index %s)", k))
 			assert(#v == 1, Format("Structure tables must contain only 1 element (at index %s)", k))
@@ -131,12 +143,14 @@ function net.RegisterStructure(name, structure)
 			if (isnumber(element)) then
 				assert(element >= 0 and element <= 12, Format("Structure table element number value must be a STRUCTURE_* value (at index %s)", k))
 			elseif (isstring(element)) then
-				assert(istable(structures[element]), Format("Structure table element string value must refer to a Structure Reference (at index %s)", k))
+				if (not istable(structures[element]) and not istable(structureType[element])) then
+					assert(false, Format("Structure table element string value must refer to a Structure Reference or Structure type (at index %s)", k))
+				end
 			else
-				assert(false, Format("Structure table elements must be STRUCTURE_* values or Structure References (at index %s)", k))
+				assert(false, Format("Structure table elements must be STRUCTURE_* values, Structure References or Structure types (at index %s)", k))
 			end
 		elseif (isstring(v)) then
-			assert(istable(structures[v]), "Structure string values must refer to a Structure")
+			assert(istable(structures[v]) or istable(structureType[v]), "Structure string values must refer to a Structure or Structure type")
 			assert(v ~= name, "Structure references cannot refer to the Structure containing them")
 		else
 			assert(isnumber(v), Format("Structure values must be numbers (at index %s)", k))
@@ -157,10 +171,12 @@ function net.WriteStructure(name, structure)
 
 		assert(value ~= nil, Format("Structure table missing index for %s", k))
 
-		if (isnumber(v)) then
+		if (istable(structureType[v])) then
 			local typeData = structureType[v]
 			assert(typeData.predicate(value), Format("Structure value does not match predicate of %s (at index %s)", typeData.name, k))
 			typeData.write(value)
+		elseif (istable(structures[v])) then
+			net.WriteStructure(v, structure[k])
 		elseif (istable(v)) then
 			assert(table.IsSequential(value), "Structure tables must be sequential")
 
@@ -168,16 +184,14 @@ function net.WriteStructure(name, structure)
 			net.WriteUInt(count, 32)
 
 			for index = 1, count do
-				if (isnumber(v[1])) then
+				if (istable(structureType[v[1]])) then
 					local typeData = structureType[v[1]]
 					assert(typeData.predicate(value[index]), Format("Structure table value does not match predicate of %s (at index %s:%i)", typeData.name, k, index))
 					typeData.write(value[index])
-				else -- if (isstring(v[1])) then
+				elseif (istable(structures[v[1]])) then
 					net.WriteStructure(v[1], value[index])
 				end
 			end
-		else --if (isstring(v) and istable(structures[v])) then
-			net.WriteStructure(v, structure[k])
 		end
 	end
 end
@@ -189,18 +203,20 @@ function net.ReadStructure(name)
 	local ret = {}
 
 	for k,v in SortedPairs(structures[name]) do
-		if (isstring(v)) then
+		if (istable(structures[v])) then
 			ret[k] = net.ReadStructure(v)
+		elseif (istable(structureType[v])) then
+			ret[k] = structureType[v].read()
 		else
 			if (istable(v)) then
 				local count = net.ReadUInt(32)
 
 				local array = {}
 				for i = 1, count do
-					if (isnumber(v[1])) then
-						array[count] = typeData.read()
-					else -- if (isstring(v[1])) then
-						array[count] = net.ReadStructure(v[1])
+					if (istable(structureType[v[1]])) then
+						array[i] = structureType[v[1]].read()
+					elseif (istable(structures[v[1]])) then
+						array[i] = net.ReadStructure(v[1])
 					end
 				end
 
