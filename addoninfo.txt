@@ -1,0 +1,6 @@
+"AddonInfo"
+{
+	"name"			"netStructures"
+	"version"		"1.0"
+	"author_name"	"Gambit"
+}
